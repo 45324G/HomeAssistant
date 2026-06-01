@@ -609,6 +609,48 @@ Connected to MQTT server
 
 ---
 
+### 💻 Шаг 4.6.1 — Добавить Qingping CO2 монитор
+⏱ 10 минут
+
+Qingping поддерживает HomeKit — это самый простой и локальный способ.
+
+**Проверьте:** есть ли на коробке/устройстве значок HomeKit (домик с замочком).
+
+**Вариант А — через HomeKit Controller (рекомендуется, встроена в HA):**
+
+1. Убедитесь что Qingping монитор в той же WiFi сети что и HA
+2. `Settings` → `Devices & Services` → `Add Integration` → `HomeKit Controller`
+3. HA автоматически обнаружит монитор в сети
+4. Нажмите **Configure** рядом с Qingping
+5. Введите 8-значный PIN-код (написан на корпусе или в приложении Qingping+)
+6. Готово — в HA появятся сенсоры: `sensor.CO2`, `sensor.temperature`, `sensor.humidity`
+
+**Вариант Б — через Qingping+ облако (если HomeKit не поддерживается):**
+1. HACS → Integrations → поиск `qingping`
+2. Установить кастомный компонент → Reload
+3. `Settings` → `Devices & Services` → `Add Integration` → `Qingping`
+4. Войдите через аккаунт Qingping+ (приложение на телефоне)
+
+**Автоматизация по CO2:**
+```yaml
+alias: "Высокий CO2 — проветрить"
+trigger:
+  - platform: numeric_state
+    entity_id: sensor.qingping_co2
+    above: 1000
+action:
+  - service: media_player.play_media
+    target:
+      entity_id: media_player.yandex_station_midi
+    data:
+      media_content_id: "Уровень CO2 высокий, рекомендую проветрить помещение"
+      media_content_type: "text"
+```
+
+> **Нормы CO2:** до 800 ppm — отлично, 800–1000 ppm — норма, 1000–1500 ppm — проветрить, выше 1500 ppm — плохо.
+
+---
+
 ### 💻 Шаг 4.7 — Добавить камеру Cootli
 ⏱ 10 минут
 
