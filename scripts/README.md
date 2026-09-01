@@ -1,3 +1,8 @@
+> ⚠️ **УСТАРЕЛО.** Скрипты написаны под Windows + Hyper-V — этот вариант отменён.
+> Актуальная архитектура (Proxmox + HAOS) — в [../MASTER_PLAN.md](../MASTER_PLAN.md).
+
+---
+
 # Скрипты автоматизации
 
 PowerShell-скрипты для развертывания Home Assistant OS в Hyper-V на Windows 11 Pro.
