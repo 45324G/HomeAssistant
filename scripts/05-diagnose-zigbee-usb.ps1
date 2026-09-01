@@ -221,17 +221,74 @@ foreach ($n in (Get-NetAdapter -ErrorAction SilentlyContinue | Where-Object { $_
     Add-Line "      MAC: $($n.MacAddress) | Скорость: $($n.LinkSpeed) | IP: $($ip -join ', ')"
 }
 
-# Проверяем, доступен ли донгл ещё и по сети (у Dongle Max есть Ethernet)
-Add-Header 'ПРОВЕРКА СЕТЕВОГО РЕЖИМА ДОНГЛА'
-foreach ($testIp in @('192.168.1.11', '192.168.0.11')) {
-    $alive = Test-Connection -ComputerName $testIp -Count 1 -Quiet -ErrorAction SilentlyContinue
-    if ($alive) {
-        Add-Line "  $testIp — отвечает на ping" 'Green'
-        $tcp = Test-NetConnection -ComputerName $testIp -Port 6638 -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
-        Add-Line "      Порт 6638 (ser2net): $(if ($tcp.TcpTestSucceeded) { 'открыт' } else { 'закрыт' })" `
-                 $(if ($tcp.TcpTestSucceeded) { 'Green' } else { 'Yellow' })
-    } else {
-        Add-Line "  $testIp — не отвечает"
+# ================================================================ Поиск донгла в сети
+# Dongle Max может питаться по USB, а данные передавать по Ethernet.
+# В этом режиме он виден как обычный сетевой узел с открытым портом 6638.
+Add-Header 'ПОИСК ДОНГЛА В ЛОКАЛЬНОЙ СЕТИ'
+
+$localIp = (Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+            Where-Object { $_.IPAddress -notlike '127.*' -and $_.IPAddress -notlike '169.254.*' } |
+            Select-Object -First 1).IPAddress
+
+if (-not $localIp) {
+    Add-Line "  Локальный IP не определён — сканирование пропущено" 'Red'
+} else {
+    $base = $localIp -replace '\.\d+$', ''
+    Add-Line "  Подсеть: $base.0/24 (мой адрес $localIp)"
+    Add-Line "  Сканирование 254 адресов, ~15 секунд..."
+
+    # Асинхронный ping всей подсети (работает и в Windows PowerShell 5.1)
+    $tasks = 1..254 | ForEach-Object {
+        (New-Object System.Net.NetworkInformation.Ping).SendPingAsync("$base.$_", 400)
+    }
+    try { [System.Threading.Tasks.Task]::WaitAll($tasks, 20000) | Out-Null } catch { }
+
+    $alive = @($tasks | Where-Object { $_.Status -eq 'RanToCompletion' -and $_.Result.Status -eq 'Success' } |
+                        ForEach-Object { $_.Result.Address.ToString() })
+
+    Add-Line "  Найдено активных узлов: $($alive.Count)" 'Green'
+
+    # ARP-таблица даёт MAC — по нему можно опознать производителя
+    $arp = @{}
+    (arp -a) -split "`n" | ForEach-Object {
+        if ($_ -match '(\d+\.\d+\.\d+\.\d+)\s+([0-9a-f]{2}[-:][0-9a-f]{2}[-:][0-9a-f]{2}[-:][0-9a-f]{2}[-:][0-9a-f]{2}[-:][0-9a-f]{2})') {
+            $arp[$matches[1]] = $matches[2].ToUpper()
+        }
+    }
+
+    Add-Line ''
+    Add-Line "  Узлы с открытым портом 6638 (ser2net — это и есть донгл):"
+    $dongleFound = $false
+
+    foreach ($ip in ($alive | Sort-Object { [version]$_ })) {
+        $mac  = if ($arp.ContainsKey($ip)) { $arp[$ip] } else { '-' }
+
+        # Порт 6638 = ser2net координатора Zigbee
+        $t6638 = Test-NetConnection -ComputerName $ip -Port 6638 `
+                    -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -InformationLevel Quiet
+        # Порт 80 = веб-интерфейс донгла
+        $t80 = Test-NetConnection -ComputerName $ip -Port 80 `
+                    -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -InformationLevel Quiet
+
+        if ($t6638) {
+            $dongleFound = $true
+            Add-Line "  >>> $ip | MAC $mac | порт 6638 ОТКРЫТ | веб $(if($t80){'есть'}else{'нет'})" 'Green'
+            Add-Line "        Это адрес для Zigbee2MQTT: tcp://${ip}:6638" 'Green'
+        } elseif ($t80) {
+            Add-Line "      $ip | MAC $mac | веб-интерфейс на :80"
+        } else {
+            Add-Line "      $ip | MAC $mac"
+        }
+    }
+
+    if (-not $dongleFound) {
+        Add-Line ''
+        Add-Line "  Узлов с открытым портом 6638 не найдено." 'Yellow'
+        Add-Line "  Возможные причины:" 'Yellow'
+        Add-Line "    - Ethernet-кабель донгла не подключён к роутеру" 'Yellow'
+        Add-Line "    - Донгл ещё загружается (подождите 60 секунд после подачи питания)" 'Yellow'
+        Add-Line "    - ser2net на донгле не активирован или использует другой порт" 'Yellow'
+        Add-Line "    - Питания по USB недостаточно (попробуйте отдельный БП или PoE)" 'Yellow'
     }
 }
 
