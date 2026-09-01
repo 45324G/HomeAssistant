@@ -30,13 +30,17 @@
 КОНТЕКСТ ИНФРАСТРУКТУРЫ
 - Роутер: Eltex RG-1520G-Wax, веб-интерфейс на 192.168.1.1 (или 192.168.0.1)
 - Провайдер: Акадо, подключение по кабелю
-- Zigbee-координатор: SONOFF Dongle Max PoE, СЕТЕВОЙ (не USB!),
-  целевой IP 192.168.1.11, протокол ser2net на TCP-порту 6638
+- Zigbee-координатор: SONOFF Dongle Max (Dongle-M). Умеет три режима связи:
+  Ethernet, Wi-Fi и USB. ИСПОЛЬЗУЕТСЯ ETHERNET (Wi-Fi не рекомендован
+  официальной документацией Z2M: serial-протокол не переносит потери пакетов).
+  Питание: USB Type-C 5V/1A от NUC либо PoE 48V.
+  Целевой IP 192.168.1.11, TCP-порт 6638, адрес для Z2M: tcp://192.168.1.11:6638
 - Целевой IP Home Assistant: 192.168.1.10
 - Удалённый доступ к NUC: МойАссистент (мойассистент.рф) + RDP как резерв
 
-ВАЖНО: Zigbee-донгл подключается ПО СЕТИ, поэтому проброс USB в VM НЕ НУЖЕН.
-Это ключевая причина, почему виртуализация здесь безопасна.
+ВАЖНО: Zigbee-донгл подключается ПО СЕТИ (Ethernet), поэтому проброс USB
+в VM НЕ НУЖЕН — Hyper-V его и не умеет. Это ключевая причина, почему
+виртуализация здесь безопасна. USB-кабель используется ТОЛЬКО для питания.
 
 ЖЁСТКИЕ ТРЕБОВАНИЯ К РЕШЕНИЮ
 1. Windows 11 Pro НЕ стирать — на нём остаётся МойАссистент
@@ -115,7 +119,7 @@
       password: <пароль из настроек Mosquitto>
     serial:
       port: tcp://192.168.1.11:6638
-      adapter: ezsp
+      adapter: ember
     homeassistant:
       enabled: true
     frontend:
@@ -127,9 +131,11 @@
       pan_id: GENERATE
       channel: 25
 
-  КРИТИЧНО: adapter именно 'ezsp' — SONOFF Dongle Max построен на чипе
-  Silicon Labs EFR32MG21. Указание 'zstack' (от старого Dongle Plus на CC2652P)
-  приведёт к тому, что Zigbee2MQTT не стартует. Это самая частая ошибка.
+  КРИТИЧНО: adapter именно 'ember'. SONOFF Dongle Max построен на чипах
+  Silicon Labs EFR32MG24 (радио) + ESP32-D0WD-R2 (сеть). В Zigbee2MQTT для
+  таких адаптеров используется драйвер 'ember'. Устаревшее имя 'ezsp' и
+  тип 'zstack' (от Dongle Plus на CC2652P) приведут к тому, что Z2M не стартует.
+  Вместо IP можно указать имя: tcp://Dongle-M.local:6638
 
   Канал 25 выбран потому, что минимально перекрывается с WiFi 2.4 ГГц
   (каналы WiFi 1/6/11 перекрывают Zigbee 11–22).
@@ -205,7 +211,7 @@ cd C:\HomeAssistant\scripts
 | VM создана, но не грузится | `vmconnect.exe localhost HomeAssistant` — увидеть экран загрузки |
 | HAOS грузится, но нет сети | `Get-VMSwitch` — проверить что External-коммутатор на нужном адаптере |
 | Не знаю IP виртуалки | `(Get-VMNetworkAdapter -VMName HomeAssistant).IPAddresses` |
-| Zigbee2MQTT не стартует | Проверить `adapter: ezsp` и `Test-NetConnection 192.168.1.11 -Port 6638` |
+| Zigbee2MQTT не стартует | Проверить `adapter: ember` и `Test-NetConnection 192.168.1.11 -Port 6638` |
 | Всё сломалось, начать заново | `.\02-install-haos-vm.ps1` → ввести `DELETE` при запросе |
 
 Быстрый статус в любой момент:

@@ -429,7 +429,7 @@ mqtt:
 
 serial:
   port: tcp://192.168.1.11:6638
-  adapter: ezsp
+  adapter: ember
 
 homeassistant:
   enabled: true

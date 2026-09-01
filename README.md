@@ -378,7 +378,7 @@ mqtt:
 
 serial:
   port: tcp://192.168.1.11:6638  # SONOFF Dongle Max PoE IP
-  adapter: ezsp                  # для SONOFF Dongle Max (EFR32MG21)
+  adapter: ember                  # для SONOFF Dongle Max (EFR32MG24)
 
 homeassistant:
   enabled: true
@@ -394,7 +394,7 @@ advanced:
   channel: 25  # канал 25 — минимальное перекрытие с WiFi 2.4GHz
 ```
 
-> **Факт-чек адаптер:** SONOFF Dongle Max использует чип Silicon Labs EFR32MG21. Правильный тип адаптера — `ezsp`. Это отличается от старого ZBDONGLE-P (на базе CC2652P, тип `zstack`). Ошибка в типе адаптера — самая частая причина того, что Zigbee2MQTT не стартует.
+> **Факт-чек адаптер (ИСПРАВЛЕНО 2026-09-01):** SONOFF Dongle Max построен на двух чипах: **Silicon Labs EFR32MG24** (радио Zigbee/Thread) и **ESP32-D0WD-R2** (сеть и веб-консоль). Правильный тип адаптера в Zigbee2MQTT — **`ember`**. Ранее в этом документе было указано `ezsp` — это устаревшее название драйвера, в актуальных версиях Z2M используется `ember`. Тип `zstack` относится к старому ZBDONGLE-P на CC2652P и здесь не подходит.
 
 > **Факт-чек канал 25:** WiFi 2.4GHz каналы 1, 6, 11 перекрываются с Zigbee каналами 11-22. Zigbee канал 25 имеет минимальное RF-перекрытие с WiFi. Рекомендован сообществом HA для смешанных окружений.
 
@@ -801,14 +801,14 @@ automation:
 **Симптомы провала:** После настройки Zigbee2MQTT не может подключиться к координатору.
 
 **Причины:**
-- Неправильный тип адаптера в конфигурации (ezsp vs zstack)
+- Неправильный тип адаптера в конфигурации (нужен `ember`, а не `ezsp`/`zstack`)
 - Firewall блокирует порт 6638
 - Dongle получил другой IP
 
 **Превентивные меры:**
 - ✅ Всегда использовать статический IP для Dongle через DHCP Reservation
 - ✅ Проверить `telnet 192.168.1.11 6638` — должно открыться соединение
-- ✅ Тип адаптера для EFR32MG21: `ezsp` (НЕ `zstack`)
+- ✅ Тип адаптера для EFR32MG24: `ember` (НЕ `zstack`, НЕ устаревший `ezsp`)
 
 ---
 
@@ -865,8 +865,13 @@ automation:
 
 | Утверждение | Статус | Источник |
 |------------|--------|---------|
-| SONOFF Dongle Max PoE использует чип EFR32MG21 | ✅ Верно | SONOFF официальный сайт, FCC документация |
-| Тип адаптера для EFR32MG21 в Z2M — `ezsp` | ✅ Верно | zigbee2mqtt.io/guide/adapters |
+| SONOFF Dongle Max использует чипы EFR32MG24 + ESP32-D0WD-R2 | ✅ Проверено | sonoff.tech, обзор CNX Software |
+| Dongle Max поддерживает Ethernet, **Wi-Fi** и USB | ✅ Проверено | sonoff.tech, Lowes, ameriDroid |
+| USB Type-C — питание 5V/1A ИЛИ работа как USB-донгл | ✅ Проверено | sonoff.tech спецификация |
+| PoE — 48V/0.25A | ✅ Проверено | sonoff.tech спецификация |
+| Zigbee2MQTT не рекомендует Wi-Fi для координатора | ✅ Проверено | zigbee2mqtt.io/advanced/remote-adapter |
+| Тип адаптера для Dongle Max в Z2M — `ember` | ✅ Проверено | zigbee2mqtt.io/guide/adapters/emberznet |
+| Адрес для Z2M: `tcp://Dongle-M.local:6638`, baudRate 115200 | ✅ Проверено | документация SONOFF |
 | Z2M подключается к сетевому адаптеру через `tcp://IP:6638` | ✅ Верно | GitHub: Koenkk/zigbee2mqtt issues #17110 |
 | LocalTuya требует Tuya Developer Account для Local Key | ✅ Верно | GitHub: rospogrigio/localtuya README |
 | Zigbee канал 25 минимально перекрывается с WiFi 2.4GHz | ✅ Верно | IEEE 802.15.4 / 802.11 стандарты, zigbee2mqtt docs |
@@ -889,7 +894,7 @@ automation:
 - [ ] Создан аккаунт администратора в HA
 - [ ] Mosquitto broker установлен и запущен
 - [ ] MQTT интеграция настроена в HA
-- [ ] Zigbee2MQTT настроен с правильным IP координатора и типом `ezsp`
+- [ ] Zigbee2MQTT настроен с правильным адресом координатора и типом `ember`
 - [ ] Zigbee2MQTT успешно запущен (нет ошибок в логах)
 
 ### Подключение устройств
