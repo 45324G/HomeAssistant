@@ -30,7 +30,12 @@ param(
     [int]   $MemoryGB = 4,
     [int]   $CPUCount = 2,
     [string]$VMPath   = 'C:\HyperV',
-    [string]$SwitchName = 'HA-External'
+    [string]$SwitchName = 'HA-External',
+
+    # Только скачать и распаковать образ HAOS, не создавая VM.
+    # Удобно выполнить заранее на быстром интернете (например, в офисе),
+    # а саму VM создать позже дома, когда NUC будет в целевой сети.
+    [switch]$DownloadOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -49,14 +54,21 @@ Step "Проверка предусловий"
 
 $hv = Get-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V-All
 if ($hv.State -ne 'Enabled') {
-    Die "Hyper-V не включён. Запустите 01-prepare-windows.ps1 и перезагрузитесь."
+    if ($DownloadOnly) {
+        Warn "Hyper-V ещё не включён — для скачивания образа это не важно"
+    } else {
+        Die "Hyper-V не включён. Запустите 01-prepare-windows.ps1 и перезагрузитесь."
+    }
+} else {
+    Ok "Hyper-V активен"
 }
-Ok "Hyper-V активен"
 
-if (-not (Get-Command Get-VM -ErrorAction SilentlyContinue)) {
-    Die "Модуль Hyper-V PowerShell недоступен. Перезагрузитесь после включения Hyper-V."
+if (-not $DownloadOnly) {
+    if (-not (Get-Command Get-VM -ErrorAction SilentlyContinue)) {
+        Die "Модуль Hyper-V PowerShell недоступен. Перезагрузитесь после включения Hyper-V."
+    }
+    Ok "Модуль Hyper-V PowerShell загружен"
 }
-Ok "Модуль Hyper-V PowerShell загружен"
 
 # Свободное место: образ ~1.5 ГБ + распакованный ~6 ГБ + рост VHDX
 $targetDrive = (Split-Path -Qualifier $VMPath).TrimEnd(':')
@@ -72,7 +84,7 @@ New-Item -ItemType Directory -Path $downloadDir -Force | Out-Null
 
 # ================================================================ 1. Уже существует?
 Step "Проверка существующей VM"
-$existingVM = Get-VM -Name $VMName -ErrorAction SilentlyContinue
+$existingVM = if ($DownloadOnly) { $null } else { Get-VM -Name $VMName -ErrorAction SilentlyContinue }
 if ($existingVM) {
     Warn "VM '$VMName' уже существует (состояние: $($existingVM.State))"
     Write-Host "    Пересоздать? Все данные HA будут ПОТЕРЯНЫ. (введите 'DELETE' для подтверждения): " -ForegroundColor Yellow -NoNewline
@@ -150,18 +162,23 @@ Step "Распаковка образа"
 
 $vhdxDir  = Join-Path $VMPath $VMName
 New-Item -ItemType Directory -Path $vhdxDir -Force | Out-Null
-
-$extractTmp = Join-Path $downloadDir 'extract'
-if (Test-Path $extractTmp) { Remove-Item $extractTmp -Recurse -Force }
-New-Item -ItemType Directory -Path $extractTmp -Force | Out-Null
-
-Expand-Archive -Path $archivePath -DestinationPath $extractTmp -Force
-$srcVhdx = Get-ChildItem -Path $extractTmp -Filter '*.vhdx' -Recurse | Select-Object -First 1
-if (-not $srcVhdx) { Die "В архиве не найден .vhdx файл" }
-
 $vhdxPath = Join-Path $vhdxDir "$VMName.vhdx"
-Move-Item -Path $srcVhdx.FullName -Destination $vhdxPath -Force
-Remove-Item $extractTmp -Recurse -Force
+
+if (Test-Path $vhdxPath) {
+    # Образ уже распакован (например, ранее запускали с -DownloadOnly)
+    Ok "VHDX уже распакован — пропускаем"
+} else {
+    $extractTmp = Join-Path $downloadDir 'extract'
+    if (Test-Path $extractTmp) { Remove-Item $extractTmp -Recurse -Force }
+    New-Item -ItemType Directory -Path $extractTmp -Force | Out-Null
+
+    Expand-Archive -Path $archivePath -DestinationPath $extractTmp -Force
+    $srcVhdx = Get-ChildItem -Path $extractTmp -Filter '*.vhdx' -Recurse | Select-Object -First 1
+    if (-not $srcVhdx) { Die "В архиве не найден .vhdx файл" }
+
+    Move-Item -Path $srcVhdx.FullName -Destination $vhdxPath -Force
+    Remove-Item $extractTmp -Recurse -Force
+}
 
 $vhdxSizeGB = [math]::Round((Get-Item $vhdxPath).Length / 1GB, 2)
 Ok "VHDX готов: $vhdxPath ($vhdxSizeGB ГБ)"
@@ -178,6 +195,33 @@ try {
     }
 } catch {
     Warn "Не удалось расширить диск: $($_.Exception.Message). Продолжаем с исходным размером."
+}
+
+if ($DownloadOnly) {
+    Write-Host @"
+
+$('=' * 62)
+  ОБРАЗ СКАЧАН И ГОТОВ
+$('=' * 62)
+
+  Версия HAOS:  $version
+  Файл:         $vhdxPath
+  Размер:       $([math]::Round((Get-Item $vhdxPath).Length / 1GB, 2)) ГБ
+
+  Виртуальная машина НЕ создавалась (ключ -DownloadOnly).
+
+  Дома, когда NUC будет подключён к домашней сети кабелем, запустите
+  без ключа — образ уже на диске, скачиваться заново не будет:
+
+      .\02-install-haos-vm.ps1
+
+$('=' * 62)
+
+"@ -ForegroundColor White
+
+    @{ Version = $version; VhdxPath = $vhdxPath; DownloadedAt = (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') } |
+        ConvertTo-Json | Out-File -FilePath (Join-Path $PSScriptRoot 'ha-image-state.json') -Encoding UTF8
+    exit 0
 }
 
 # ================================================================ 5. Виртуальный коммутатор

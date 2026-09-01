@@ -16,6 +16,20 @@
 
 #Requires -RunAsAdministrator
 
+[CmdletBinding()]
+param(
+    # Режим настройки вне дома (например, в офисе) через удалённое подключение.
+    # Пропускает всё, что может разорвать текущее сетевое соединение или
+    # изменить профиль чужой сети:
+    #   - смену профиля сети на Private
+    #   - отключение управления питанием сетевых адаптеров
+    # Эти шаги нужно выполнить дома скриптом с ключом -HomeNetworkOnly.
+    [switch]$AtOffice,
+
+    # Выполнить ТОЛЬКО те сетевые шаги, которые были пропущены с -AtOffice.
+    [switch]$HomeNetworkOnly
+)
+
 $ErrorActionPreference = 'Stop'
 $needReboot = $false
 
@@ -34,6 +48,45 @@ function Warn {
 
 Write-Host "`n  ПОДГОТОВКА WINDOWS ДЛЯ HOME ASSISTANT" -ForegroundColor White
 Write-Host "  $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" -ForegroundColor DarkGray
+
+if ($AtOffice) {
+    Write-Host "`n  РЕЖИМ: настройка вне дома (-AtOffice)" -ForegroundColor Yellow
+    Write-Host "  Сетевые настройки НЕ трогаем, чтобы не оборвать удалённое" -ForegroundColor Yellow
+    Write-Host "  подключение. Дома нужно будет запустить:" -ForegroundColor Yellow
+    Write-Host "      .\01-prepare-windows.ps1 -HomeNetworkOnly" -ForegroundColor Yellow
+}
+if ($HomeNetworkOnly) {
+    Write-Host "`n  РЕЖИМ: только сетевые шаги (-HomeNetworkOnly)" -ForegroundColor Cyan
+}
+
+if ($HomeNetworkOnly) {
+    # --- Только то, что было пропущено в офисе ---
+    Step "Профиль сети -> Private"
+    try {
+        Get-NetConnectionProfile | ForEach-Object {
+            if ($_.NetworkCategory -ne 'Private') {
+                Set-NetConnectionProfile -InterfaceIndex $_.InterfaceIndex -NetworkCategory Private
+                Ok "Сеть '$($_.Name)' переведена в Private"
+            } else { Ok "Сеть '$($_.Name)' уже Private" }
+        }
+    } catch { Warn "Не удалось: $($_.Exception.Message)" }
+
+    Enable-NetFirewallRule -DisplayGroup 'Network Discovery' -ErrorAction SilentlyContinue
+    Ok "Сетевое обнаружение включено"
+
+    Step "Запрет сна для сетевых адаптеров"
+    Get-NetAdapter | Where-Object { $_.Status -eq 'Up' } | ForEach-Object {
+        try {
+            Disable-NetAdapterPowerManagement -Name $_.Name -ErrorAction Stop
+            Ok "Адаптер '$($_.Name)': управление питанием отключено"
+        } catch {
+            Warn "Адаптер '$($_.Name)': не поддерживает настройку"
+        }
+    }
+
+    Write-Host "`n  Сетевые шаги выполнены. Дальше: .\02-install-haos-vm.ps1`n" -ForegroundColor Green
+    exit 0
+}
 
 # ================================================================ 1. Питание
 Step "Настройка электропитания (режим 24/7)"
@@ -78,6 +131,11 @@ powercfg /setactive $highPerf
 
 # Запретить сетевым адаптерам засыпать
 Step "Запрет сна для сетевых адаптеров"
+if ($AtOffice) {
+    Warn "ПРОПУЩЕНО (-AtOffice): изменение адаптера может оборвать удалённый сеанс"
+    Warn "Выполнить дома: .\01-prepare-windows.ps1 -HomeNetworkOnly"
+}
+if (-not $AtOffice) {
 Get-NetAdapter | Where-Object { $_.Status -eq 'Up' } | ForEach-Object {
     try {
         Disable-NetAdapterPowerManagement -Name $_.Name -ErrorAction Stop
@@ -85,6 +143,7 @@ Get-NetAdapter | Where-Object { $_.Status -eq 'Up' } | ForEach-Object {
     } catch {
         Warn "Адаптер '$($_.Name)': не поддерживает настройку ($($_.Exception.Message.Split([Environment]::NewLine)[0]))"
     }
+}
 }
 
 # ================================================================ 2. Windows Update
@@ -137,6 +196,10 @@ Ok "Firewall: RDP разрешён только из локальной сети
 
 # ================================================================ 4. Имя и обнаружение в сети
 Step "Настройка сетевого обнаружения"
+if ($AtOffice) {
+    Warn "ПРОПУЩЕНО (-AtOffice): не меняем профиль рабочей сети"
+    Warn "Рабочая сеть должна оставаться Public — это требование безопасности"
+} else {
 try {
     # Профиль текущей сети → Private (иначе RDP и обнаружение блокируются)
     Get-NetConnectionProfile | ForEach-Object {
@@ -153,6 +216,7 @@ try {
 
 Enable-NetFirewallRule -DisplayGroup 'Network Discovery' -ErrorAction SilentlyContinue
 Ok "Сетевое обнаружение включено"
+}
 
 # ================================================================ 5. Hyper-V
 Step "Включение Hyper-V"
@@ -219,6 +283,31 @@ Write-Host @"
 "@ -ForegroundColor White
 
 if ($needReboot) {
+    Write-Host ("=" * 60) -ForegroundColor Red
+    Write-Host "  ВНИМАНИЕ: ПЕРЕД ПЕРЕЗАГРУЗКОЙ" -ForegroundColor Red
+    Write-Host ("=" * 60) -ForegroundColor Red
+    Write-Host @"
+
+  Если вы работаете через удалённый доступ — после перезагрузки
+  соединение оборвётся. Оно восстановится ТОЛЬКО если программа
+  удалённого доступа запускается автоматически вместе с Windows.
+
+  Проверьте ДО перезагрузки:
+    [ ] В МойАссистент включён автозапуск при старте Windows
+    [ ] Задан постоянный пароль (неконтролируемый доступ),
+        а не одноразовый код
+    [ ] ID устройства записан отдельно
+
+  Резервный канал, если МойАссистент не поднимется:
+    RDP -> $((Get-NetIPAddress -AddressFamily IPv4 |
+              Where-Object { `$_.IPAddress -notlike '127.*' -and `$_.IPAddress -notlike '169.254.*' } |
+              Select-Object -First 1 -ExpandProperty IPAddress)):3389
+    Пользователь: $env:USERNAME
+
+  Если ни то, ни другое не настроено — понадобится монитор и клавиатура.
+
+"@ -ForegroundColor Yellow
+
     Write-Host "  Требуется перезагрузка. Выполнить сейчас? (y/n): " -ForegroundColor Yellow -NoNewline
     $answer = Read-Host
     if ($answer -match '^[yYдД]') {
